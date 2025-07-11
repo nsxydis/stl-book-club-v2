@@ -1,1 +1,1 @@
-# stl-book-club-2.0
+# stl-book-club-v2
