@@ -407,35 +407,45 @@ def display_voting_results(rounds: List[Dict], books: List[Book]):
         # Check if this is the final round
         is_final = 'winner' in round_data
 
-        if not is_final:
+        # Display header for all rounds including final
+        if is_final:
+            st.subheader(f"Round {round_num} - Final")
+        else:
             st.subheader(f"Round {round_num}")
 
-            # Create a DataFrame for visualization
-            vote_data = []
-            for book_id, count in round_data['vote_counts'].items():
-                vote_data.append({
-                    'Book': book_lookup.get(book_id, book_id),
-                    'Votes': count
-                })
+        # Create a DataFrame for visualization with percentages
+        vote_data = []
+        total_votes = sum(round_data['vote_counts'].values())
 
-            if vote_data:
-                df = pl.DataFrame(vote_data).sort('Votes', descending=True)
+        for book_id, count in round_data['vote_counts'].items():
+            percentage = round((count / total_votes * 100)) if total_votes > 0 else 0
+            vote_data.append({
+                'Book': book_lookup.get(book_id, book_id),
+                'Votes': count,
+                'Percentage': f"{percentage}%"
+            })
 
-                # Display table only
-                st.dataframe(df, use_container_width=True, hide_index=True)
+        if vote_data:
+            df = pl.DataFrame(vote_data).sort('Votes', descending=True)
 
-            # Show eliminated book(s)
-            if round_data['eliminated']:
-                eliminated = round_data['eliminated']
-                # Handle both single book and multiple books elimination
-                if isinstance(eliminated, list):
-                    eliminated_titles = [book_lookup.get(book_id, book_id) for book_id in eliminated]
-                    st.warning(f"❌ Eliminated: **{', '.join(eliminated_titles)}**")
-                else:
-                    eliminated_title = book_lookup.get(eliminated, 'Unknown')
-                    st.warning(f"❌ Eliminated: **{eliminated_title}**")
+            # Display table
+            st.dataframe(df, use_container_width=True, hide_index=True)
 
-            st.divider()
+        # Show eliminated book(s) or winner
+        if is_final:
+            # Show winner message is already at top, just show final tally
+            pass
+        elif round_data['eliminated']:
+            eliminated = round_data['eliminated']
+            # Handle both single book and multiple books elimination
+            if isinstance(eliminated, list):
+                eliminated_titles = [book_lookup.get(book_id, book_id) for book_id in eliminated]
+                st.warning(f"❌ Eliminated: **{', '.join(eliminated_titles)}**")
+            else:
+                eliminated_title = book_lookup.get(eliminated, 'Unknown')
+                st.warning(f"❌ Eliminated: **{eliminated_title}**")
+
+        st.divider()
 
     # Display winning book details at bottom
     if winner_round:
@@ -693,46 +703,66 @@ def main():
     with tab5:
         st.header("🐛 Debug - Current Votes")
 
-        if not st.session_state.votes:
-            st.info("No votes have been cast yet.")
+        # Password protection
+        if 'debug_authenticated' not in st.session_state:
+            st.session_state.debug_authenticated = False
+
+        if not st.session_state.debug_authenticated:
+            password = st.text_input("Enter password to access debug data:", type="password", key="debug_password")
+            if st.button("Submit", key="debug_submit"):
+                if password == "hyrule":
+                    st.session_state.debug_authenticated = True
+                    st.rerun()
+                else:
+                    st.error("❌ Incorrect password")
         else:
-            st.subheader(f"Total Voters: {len(st.session_state.votes)}")
+            # Show logout button
+            if st.button("🔒 Lock Debug Tab"):
+                st.session_state.debug_authenticated = False
+                st.rerun()
 
-            # Create a lookup for book titles
-            book_lookup = {book.id: book.title for book in st.session_state.books}
-
-            # Display votes in a table format
-            for voter_name, rankings in st.session_state.votes.items():
-                st.markdown(f"### 👤 {voter_name}")
-
-                # Create ranked list
-                vote_data = []
-                for rank, book_id in enumerate(rankings, 1):
-                    book_title = book_lookup.get(book_id, f"Unknown ({book_id})")
-                    vote_data.append({
-                        'Rank': rank,
-                        'Book': book_title
-                    })
-
-                if vote_data:
-                    df = pl.DataFrame(vote_data)
-                    st.dataframe(df, use_container_width=True, hide_index=True)
-
-                st.divider()
-
-            # Show raw data in expander
-            with st.expander("📋 View Raw Vote Data"):
-                st.json(st.session_state.votes)
-
-            # Show persistent storage status
             st.divider()
-            st.subheader("💾 Persistent Storage")
-            storage = get_persistent_storage()
-            col1, col2 = st.columns(2)
-            with col1:
-                st.metric("Books in Storage", len(storage['books']))
-            with col2:
-                st.metric("Votes in Storage", len(storage['votes']))
+
+            if not st.session_state.votes:
+                st.info("No votes have been cast yet.")
+            else:
+                st.subheader(f"Total Voters: {len(st.session_state.votes)}")
+
+                # Create a lookup for book titles
+                book_lookup = {book.id: book.title for book in st.session_state.books}
+
+                # Display votes in a table format
+                for voter_name, rankings in st.session_state.votes.items():
+                    st.markdown(f"### 👤 {voter_name}")
+
+                    # Create ranked list
+                    vote_data = []
+                    for rank, book_id in enumerate(rankings, 1):
+                        book_title = book_lookup.get(book_id, f"Unknown ({book_id})")
+                        vote_data.append({
+                            'Rank': rank,
+                            'Book': book_title
+                        })
+
+                    if vote_data:
+                        df = pl.DataFrame(vote_data)
+                        st.dataframe(df, use_container_width=True, hide_index=True)
+
+                    st.divider()
+
+                # Show raw data in expander
+                with st.expander("📋 View Raw Vote Data"):
+                    st.json(st.session_state.votes)
+
+                # Show persistent storage status
+                st.divider()
+                st.subheader("💾 Persistent Storage")
+                storage = get_persistent_storage()
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.metric("Books in Storage", len(storage['books']))
+                with col2:
+                    st.metric("Votes in Storage", len(storage['votes']))
 
 if __name__ == '__main__':
     main()
