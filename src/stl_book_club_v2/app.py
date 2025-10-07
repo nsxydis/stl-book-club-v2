@@ -8,6 +8,7 @@ from typing import List, Dict
 import polars as pl
 import requests
 from urllib.parse import quote
+import plotly.graph_objects as go
 
 @dataclass
 class Book:
@@ -206,40 +207,123 @@ def display_voting_results(rounds: List[Dict], books: List[Book]):
     # Create a lookup for book titles
     book_lookup = {book.id: book.title for book in books}
 
+    # Find and display the winner at the top
+    winner_round = None
+    for round_data in rounds:
+        if 'winner' in round_data:
+            winner_round = round_data
+            break
+
+    if winner_round:
+        winner_title = book_lookup.get(winner_round['winner'], 'Unknown')
+        st.success(f"## 🎉 Winner: {winner_title}")
+        st.divider()
+
+    # Create line chart data for all rounds
+    st.subheader("📈 Vote Progression Across Rounds")
+
+    # Collect all unique books across all rounds
+    all_books = set()
+    for round_data in rounds:
+        all_books.update(round_data['vote_counts'].keys())
+
+    # Track which books were eliminated and in which round
+    eliminated_books = {}
+    for round_data in rounds:
+        if round_data.get('eliminated'):
+            eliminated_books[round_data['eliminated']] = round_data['round_number']
+
+    # Build data for line chart using Plotly
+    fig = go.Figure()
+
+    for book_id in all_books:
+        book_title = book_lookup.get(book_id, book_id)
+        x_values = []
+        y_values = []
+
+        # Collect vote data for this book across rounds
+        for round_data in rounds:
+            if book_id in round_data['vote_counts']:
+                x_values.append(round_data['round_number'])
+                y_values.append(round_data['vote_counts'][book_id])
+
+        # Add line trace
+        fig.add_trace(go.Scatter(
+            x=x_values,
+            y=y_values,
+            mode='lines+markers',
+            name=book_title,
+            line=dict(width=3),
+            marker=dict(size=8)
+        ))
+
+        # Add bomb emoji marker if this book was eliminated
+        if book_id in eliminated_books:
+            elim_round = eliminated_books[book_id]
+            elim_votes = rounds[elim_round - 1]['vote_counts'].get(book_id, 0)
+
+            fig.add_trace(go.Scatter(
+                x=[elim_round],
+                y=[elim_votes],
+                mode='text',
+                text=['💣'],
+                textfont=dict(size=20),
+                showlegend=False,
+                hoverinfo='skip'
+            ))
+
+    # Update layout for integer axes
+    fig.update_layout(
+        xaxis=dict(
+            title='Round',
+            dtick=1,  # Show every integer
+            tickmode='linear'
+        ),
+        yaxis=dict(
+            title='Votes',
+            dtick=1,  # Show every integer
+            tickmode='linear',
+            rangemode='tozero'  # Start y-axis at 0
+        ),
+        hovermode='x unified',
+        height=500
+    )
+
+    st.plotly_chart(fig, use_container_width=True)
+
+    st.divider()
+
+    # Display individual round details (tables only, no bar charts)
+    st.subheader("📊 Round-by-Round Results")
+
     for round_data in rounds:
         round_num = round_data['round_number']
 
         # Check if this is the final round
         is_final = 'winner' in round_data
 
-        if is_final:
-            st.success(f"### 🎉 Winner: {book_lookup.get(round_data['winner'], 'Unknown')}")
-        else:
+        if not is_final:
             st.subheader(f"Round {round_num}")
 
-        # Create a DataFrame for visualization
-        vote_data = []
-        for book_id, count in round_data['vote_counts'].items():
-            vote_data.append({
-                'Book': book_lookup.get(book_id, book_id),
-                'Votes': count
-            })
+            # Create a DataFrame for visualization
+            vote_data = []
+            for book_id, count in round_data['vote_counts'].items():
+                vote_data.append({
+                    'Book': book_lookup.get(book_id, book_id),
+                    'Votes': count
+                })
 
-        if vote_data:
-            df = pl.DataFrame(vote_data).sort('Votes', descending=True)
+            if vote_data:
+                df = pl.DataFrame(vote_data).sort('Votes', descending=True)
 
-            # Display bar chart
-            st.bar_chart(df.to_pandas().set_index('Book'))
+                # Display table only
+                st.dataframe(df, use_container_width=True, hide_index=True)
 
-            # Display table
-            st.dataframe(df, use_container_width=True, hide_index=True)
+            # Show eliminated book
+            if round_data['eliminated']:
+                eliminated_title = book_lookup.get(round_data['eliminated'], 'Unknown')
+                st.warning(f"❌ Eliminated: **{eliminated_title}**")
 
-        # Show eliminated book
-        if round_data['eliminated']:
-            eliminated_title = book_lookup.get(round_data['eliminated'], 'Unknown')
-            st.warning(f"❌ Eliminated: **{eliminated_title}**")
-
-        if not is_final:
             st.divider()
 
 def main():
@@ -270,8 +354,9 @@ def main():
                     results = search_book_metadata(search_title, search_author)
                     if results:
                         st.session_state.search_results = results
-                        st.session_state.selected_book = None
-                        st.success(f"✅ Found {len(results)} result(s)! Select a book below.")
+                        # Auto-populate first result
+                        st.session_state.selected_book = results[0] if results else None
+                        st.success(f"✅ Found {len(results)} result(s)! First result selected.")
                         st.rerun()
                     else:
                         st.warning("No results found. Please enter metadata manually.")
@@ -280,27 +365,12 @@ def main():
             else:
                 st.error("Please enter a book title to search")
 
-        # Display search results if available
-        if st.session_state.search_results:
-            st.divider()
-            st.subheader("📚 Search Results")
-            st.caption("Click on a book to select it")
-
-            for idx, result in enumerate(st.session_state.search_results):
-                with st.container():
-                    col1, col2 = st.columns([4, 1])
-                    with col1:
-                        st.markdown(f"**{result['title']}**")
-                        if result['author']:
-                            st.caption(f"by {result['author']}")
-                    with col2:
-                        if st.button("Select", key=f"select_{idx}"):
-                            st.session_state.selected_book = result
-                            st.rerun()
-                    st.divider()
-
         st.divider()
         st.subheader("📝 Book Details")
+
+        # Display currently selected book if available
+        if st.session_state.selected_book:
+            st.info(f"📖 Currently Selected: **{st.session_state.selected_book.get('title', 'N/A')}** by {st.session_state.selected_book.get('author', 'N/A')}")
 
         # Pre-fill with selected book if available
         default_title = st.session_state.selected_book.get('title', '') if st.session_state.selected_book else ''
@@ -342,6 +412,34 @@ def main():
                         st.error("This book has already been nominated!")
                 else:
                     st.error("Please fill in all fields!")
+
+        # Display search results if available (below the form)
+        if st.session_state.search_results:
+            st.divider()
+            st.subheader("📚 Search Results")
+            st.caption("Click on a book to select it")
+
+            for idx, result in enumerate(st.session_state.search_results):
+                # Check if this is the selected book
+                is_selected = (st.session_state.selected_book and
+                             result['title'] == st.session_state.selected_book.get('title') and
+                             result['author'] == st.session_state.selected_book.get('author'))
+
+                with st.container():
+                    col1, col2 = st.columns([4, 1])
+                    with col1:
+                        # Highlight selected book with checkmark
+                        if is_selected:
+                            st.markdown(f"✅ **{result['title']}**")
+                        else:
+                            st.markdown(f"**{result['title']}**")
+                        if result['author']:
+                            st.caption(f"by {result['author']}")
+                    with col2:
+                        if st.button("Select", key=f"select_{idx}", type="primary" if is_selected else "secondary"):
+                            st.session_state.selected_book = result
+                            st.rerun()
+                    st.divider()
 
     # Tab 2: View Nominations
     with tab2:
