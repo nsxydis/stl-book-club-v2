@@ -285,9 +285,12 @@ def display_book_card(book: Book, show_remove=False):
                 st.rerun()
         st.divider()
 
-def display_voting_results(rounds: List[Dict], books: List[Book]):
+def display_voting_results(rounds: List[Dict], books: List[Book], total_votes: int):
     """Display voting results with nice visualization"""
     st.header("🏆 Voting Results")
+
+    # Display total votes
+    st.info(f"**Total Votes Cast:** {total_votes}")
 
     # Create a lookup for book titles
     book_lookup = {book.id: book.title for book in books}
@@ -705,7 +708,7 @@ def main():
                 )
 
                 if rounds:
-                    display_voting_results(rounds, st.session_state.books)
+                    display_voting_results(rounds, st.session_state.books, len(st.session_state.votes))
                 else:
                     st.error("Unable to calculate results")
 
