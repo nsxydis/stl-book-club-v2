@@ -58,12 +58,24 @@ def search_book_metadata(title: str, author: str = "") -> List[Dict]:
 
     return []
 
+@st.cache_resource
+def get_persistent_storage():
+    """Create a persistent storage dictionary that survives across sessions"""
+    return {
+        'books': [],
+        'votes': {}
+    }
+
 def initialize_session_state():
     """Initialize session state variables"""
+    # Get persistent storage
+    storage = get_persistent_storage()
+
+    # Initialize session state with data from persistent storage
     if 'books' not in st.session_state:
-        st.session_state.books = []
+        st.session_state.books = storage['books']
     if 'votes' not in st.session_state:
-        st.session_state.votes = {}
+        st.session_state.votes = storage['votes']
     if 'voting_complete' not in st.session_state:
         st.session_state.voting_complete = False
     if 'show_results' not in st.session_state:
@@ -73,21 +85,36 @@ def initialize_session_state():
     if 'selected_book' not in st.session_state:
         st.session_state.selected_book = None
 
+    # Sync session state back to persistent storage
+    storage['books'] = st.session_state.books
+    storage['votes'] = st.session_state.votes
+
 def add_book(book: Book):
     """Add a book to the nomination list"""
+    storage = get_persistent_storage()
+
     # Check for duplicates
     for existing_book in st.session_state.books:
         if existing_book.id == book.id:
             return False
     st.session_state.books.append(book)
+
+    # Sync to persistent storage
+    storage['books'] = st.session_state.books
     return True
 
 def remove_book(book_id: str):
     """Remove a book from the nomination list"""
+    storage = get_persistent_storage()
+
     st.session_state.books = [b for b in st.session_state.books if b.id != book_id]
     # Also remove any votes for this book
     for voter in st.session_state.votes:
         st.session_state.votes[voter] = [b_id for b_id in st.session_state.votes[voter] if b_id != book_id]
+
+    # Sync to persistent storage
+    storage['books'] = st.session_state.books
+    storage['votes'] = st.session_state.votes
 
 def calculate_ranked_choice_winner(votes: Dict[str, List[str]], books: List[Book]) -> List[Dict]:
     """
@@ -590,6 +617,9 @@ def main():
                             st.error("Please rank each book only once!")
                         else:
                             st.session_state.votes[voter_name] = rankings
+                            # Sync to persistent storage
+                            storage = get_persistent_storage()
+                            storage['votes'] = st.session_state.votes
                             st.success(f"✅ Vote recorded for {voter_name}!")
                             st.balloons()
 
@@ -597,6 +627,9 @@ def main():
                     if voter_name in st.session_state.votes:
                         if st.button("Remove My Vote", use_container_width=True):
                             del st.session_state.votes[voter_name]
+                            # Sync to persistent storage
+                            storage = get_persistent_storage()
+                            storage['votes'] = st.session_state.votes
                             st.rerun()
             else:
                 st.info("👆 Enter your name to start voting")
