@@ -191,8 +191,8 @@ def calculate_ranked_choice_winner(votes: Dict[str, List[str]], books: List[Book
 
         # If there's a tie, use next-rank tiebreaker to eliminate only ONE book
         if len(books_with_min_votes) > 1:
-            # Count second-choice votes for tied books
-            second_choice_counts = {book_id: 0 for book_id in books_with_min_votes}
+            # Count next-choice votes for tied books
+            next_choice_counts = {book_id: 0 for book_id in books_with_min_votes}
 
             for ranked_choices in votes.values():
                 # Find first active choice
@@ -202,19 +202,28 @@ def calculate_ranked_choice_winner(votes: Dict[str, List[str]], books: List[Book
                         first_choice_idx = idx
                         break
 
-                # If first choice is not one of the tied books, look for second choice
-                if first_choice_idx >= 0 and ranked_choices[first_choice_idx] not in books_with_min_votes:
-                    # Look for next choice among tied books
-                    for idx in range(first_choice_idx + 1, len(ranked_choices)):
-                        if ranked_choices[idx] in books_with_min_votes:
-                            second_choice_counts[ranked_choices[idx]] += 1
-                            break
+                if first_choice_idx >= 0:
+                    # If ALL books are tied (all have same first-choice votes),
+                    # OR if this voter's first choice is among the tied books,
+                    # look at their next preference among the tied books
+                    if len(books_with_min_votes) == len(active_book_ids) or ranked_choices[first_choice_idx] in books_with_min_votes:
+                        # Look for next choice among tied books (after their current first choice)
+                        for idx in range(first_choice_idx + 1, len(ranked_choices)):
+                            if ranked_choices[idx] in books_with_min_votes:
+                                next_choice_counts[ranked_choices[idx]] += 1
+                                break
+                    else:
+                        # First choice is not one of the tied books, look for any choice among tied books
+                        for idx in range(first_choice_idx + 1, len(ranked_choices)):
+                            if ranked_choices[idx] in books_with_min_votes:
+                                next_choice_counts[ranked_choices[idx]] += 1
+                                break
 
-            # If we have second choice data, find book with fewest second choices
-            if any(count > 0 for count in second_choice_counts.values()):
-                min_second_choice = min(second_choice_counts.values())
-                books_with_min_votes = [book_id for book_id, count in second_choice_counts.items()
-                                       if count == min_second_choice]
+            # If we have next choice data, find book with fewest next choices
+            if any(count > 0 for count in next_choice_counts.values()):
+                min_next_choice = min(next_choice_counts.values())
+                books_with_min_votes = [book_id for book_id, count in next_choice_counts.items()
+                                       if count == min_next_choice]
 
         # Check if all remaining books are tied (even after tiebreaker)
         if len(books_with_min_votes) == len(active_book_ids):
@@ -225,10 +234,11 @@ def calculate_ranked_choice_winner(votes: Dict[str, List[str]], books: List[Book
             round_data['eliminated'] = eliminated_book_id
             rounds.append(round_data)
 
-            # Add final round with winner
+            # Add final round with winner - all votes go to the remaining candidate
+            total_votes = len(votes)
             rounds.append({
                 'round_number': len(rounds) + 1,
-                'vote_counts': {winner_id: vote_counts[winner_id]},
+                'vote_counts': {winner_id: total_votes},
                 'active_books': 1,
                 'eliminated': None,
                 'winner': winner_id
@@ -247,13 +257,10 @@ def calculate_ranked_choice_winner(votes: Dict[str, List[str]], books: List[Book
     # Final round - the winner (only if we didn't already declare winner above)
     if active_book_ids and len(active_book_ids) == 1:
         winner_id = list(active_book_ids)[0]
-        vote_counts = {}
-        vote_counts[winner_id] = 0
-        for ranked_choices in votes.values():
-            for book_id in ranked_choices:
-                if book_id == winner_id:
-                    vote_counts[book_id] += 1
-                    break
+
+        # All remaining votes go to the last remaining candidate
+        total_votes = len(votes)
+        vote_counts = {winner_id: total_votes}
 
         rounds.append({
             'round_number': len(rounds) + 1,
