@@ -12,15 +12,11 @@ import plotly.graph_objects as go
 
 def get_api_key():
     """Get Google Books API key from local file or Streamlit secrets"""
+    # Try Streamlit secrets (works in deployed environment)
     try:
-        from key import GOOGLE_BOOKS_API_KEY
-        return GOOGLE_BOOKS_API_KEY
-    except ImportError:
-        # Try Streamlit secrets (works in deployed environment)
-        try:
-            return st.secrets.get('GOOGLE_BOOKS_API_KEY', None)
-        except (AttributeError, FileNotFoundError):
-            return None
+        return st.secrets.get('GOOGLE_BOOKS_API_KEY', None)
+    except (AttributeError, FileNotFoundError):
+        return None
 
 @dataclass
 class Book:
