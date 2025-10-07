@@ -189,13 +189,40 @@ def calculate_ranked_choice_winner(votes: Dict[str, List[str]], books: List[Book
         # Get all books with minimum votes (could be multiple tied books)
         books_with_min_votes = [book_id for book_id, count in vote_counts.items() if count == min_votes]
 
-        # Check if all remaining books are tied
+        # If there's a tie, use next-rank tiebreaker to eliminate only ONE book
+        if len(books_with_min_votes) > 1:
+            # Count second-choice votes for tied books
+            second_choice_counts = {book_id: 0 for book_id in books_with_min_votes}
+
+            for ranked_choices in votes.values():
+                # Find first active choice
+                first_choice_idx = -1
+                for idx, book_id in enumerate(ranked_choices):
+                    if book_id in active_book_ids:
+                        first_choice_idx = idx
+                        break
+
+                # If first choice is not one of the tied books, look for second choice
+                if first_choice_idx >= 0 and ranked_choices[first_choice_idx] not in books_with_min_votes:
+                    # Look for next choice among tied books
+                    for idx in range(first_choice_idx + 1, len(ranked_choices)):
+                        if ranked_choices[idx] in books_with_min_votes:
+                            second_choice_counts[ranked_choices[idx]] += 1
+                            break
+
+            # If we have second choice data, find book with fewest second choices
+            if any(count > 0 for count in second_choice_counts.values()):
+                min_second_choice = min(second_choice_counts.values())
+                books_with_min_votes = [book_id for book_id, count in second_choice_counts.items()
+                                       if count == min_second_choice]
+
+        # Check if all remaining books are tied (even after tiebreaker)
         if len(books_with_min_votes) == len(active_book_ids):
-            # All books tied - eliminate all but one and declare winner
-            winner_id = books_with_min_votes[0]
-            for book_id in books_with_min_votes[1:]:
-                active_book_ids.remove(book_id)
-            round_data['eliminated'] = books_with_min_votes[1:]  # List of eliminated books
+            # All books tied - eliminate first one and declare second as winner
+            eliminated_book_id = books_with_min_votes[0]
+            winner_id = books_with_min_votes[1]
+            active_book_ids.remove(eliminated_book_id)
+            round_data['eliminated'] = eliminated_book_id
             rounds.append(round_data)
 
             # Add final round with winner
@@ -210,15 +237,10 @@ def calculate_ranked_choice_winner(votes: Dict[str, List[str]], books: List[Book
             active_book_ids.clear()
             break
         else:
-            # Normal elimination - eliminate all books tied for last place
-            for eliminated_book_id in books_with_min_votes:
-                active_book_ids.remove(eliminated_book_id)
-
-            # Store eliminated books (single or multiple)
-            if len(books_with_min_votes) == 1:
-                round_data['eliminated'] = books_with_min_votes[0]
-            else:
-                round_data['eliminated'] = books_with_min_votes
+            # Eliminate only ONE book - if still tied after tiebreaker, pick first one
+            eliminated_book_id = books_with_min_votes[0]
+            active_book_ids.remove(eliminated_book_id)
+            round_data['eliminated'] = eliminated_book_id
 
         rounds.append(round_data)
 
@@ -451,7 +473,7 @@ def main():
     st.title("📚 Book Club: Nominations & Voting")
 
     # Create tabs for different sections
-    tab1, tab2, tab3, tab4 = st.tabs(["📝 Nominate Books", "📋 View Nominations", "🗳️ Vote", "📊 Results"])
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(["📝 Nominate Books", "📋 View Nominations", "🗳️ Vote", "📊 Results", "🐛 Debug"])
 
     # Tab 1: Nominate Books
     with tab1:
@@ -666,6 +688,51 @@ def main():
                 if st.button("Hide Results"):
                     st.session_state.show_results = False
                     st.rerun()
+
+    # Tab 5: Debug
+    with tab5:
+        st.header("🐛 Debug - Current Votes")
+
+        if not st.session_state.votes:
+            st.info("No votes have been cast yet.")
+        else:
+            st.subheader(f"Total Voters: {len(st.session_state.votes)}")
+
+            # Create a lookup for book titles
+            book_lookup = {book.id: book.title for book in st.session_state.books}
+
+            # Display votes in a table format
+            for voter_name, rankings in st.session_state.votes.items():
+                st.markdown(f"### 👤 {voter_name}")
+
+                # Create ranked list
+                vote_data = []
+                for rank, book_id in enumerate(rankings, 1):
+                    book_title = book_lookup.get(book_id, f"Unknown ({book_id})")
+                    vote_data.append({
+                        'Rank': rank,
+                        'Book': book_title
+                    })
+
+                if vote_data:
+                    df = pl.DataFrame(vote_data)
+                    st.dataframe(df, use_container_width=True, hide_index=True)
+
+                st.divider()
+
+            # Show raw data in expander
+            with st.expander("📋 View Raw Vote Data"):
+                st.json(st.session_state.votes)
+
+            # Show persistent storage status
+            st.divider()
+            st.subheader("💾 Persistent Storage")
+            storage = get_persistent_storage()
+            col1, col2 = st.columns(2)
+            with col1:
+                st.metric("Books in Storage", len(storage['books']))
+            with col2:
+                st.metric("Votes in Storage", len(storage['votes']))
 
 if __name__ == '__main__':
     main()
