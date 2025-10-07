@@ -12,11 +12,15 @@ import plotly.graph_objects as go
 
 def get_api_key():
     """Get Google Books API key from local file or Streamlit secrets"""
-    # Try Streamlit secrets (works in deployed environment)
     try:
-        return st.secrets.get('GOOGLE_BOOKS_API_KEY', None)
-    except (AttributeError, FileNotFoundError):
-        return None
+        from key import GOOGLE_BOOKS_API_KEY
+        return GOOGLE_BOOKS_API_KEY
+    except ImportError:
+        # Try Streamlit secrets (works in deployed environment)
+        try:
+            return st.secrets.get('GOOGLE_BOOKS_API_KEY', None)
+        except (AttributeError, FileNotFoundError):
+            return None
 
 @dataclass
 class Book:
@@ -435,7 +439,7 @@ def display_voting_results(rounds: List[Dict], books: List[Book], total_votes: i
             hoverinfo='skip'
         ))
 
-    # Update layout for integer axes
+    # Update layout for integer axes with legend on top
     fig.update_layout(
         xaxis=dict(
             title='Round',
@@ -449,7 +453,14 @@ def display_voting_results(rounds: List[Dict], books: List[Book], total_votes: i
             rangemode='tozero'  # Start y-axis at 0
         ),
         hovermode='x unified',
-        height=500
+        height=500,
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="right",
+            x=1
+        )
     )
 
     st.plotly_chart(fig, use_container_width=True)
@@ -671,11 +682,12 @@ def main():
 
             if voter_name:
                 st.subheader("Rank the books in order of preference")
-                st.caption("Drag and drop to reorder, or use the select boxes")
+                st.caption("Select 'None' if you don't want to rank all books")
 
-                # Create a list of book options
+                # Create a list of book options with None option
                 book_options = {f"{book.title} by {book.author}": book.id
                                for book in st.session_state.books}
+                book_options["None"] = None
 
                 # Get current vote if exists
                 current_vote = st.session_state.votes.get(voter_name, [])
@@ -690,6 +702,9 @@ def main():
                             if book_id == current_vote[i]:
                                 default_index = idx
                                 break
+                    elif i < len(current_vote) and current_vote[i] is None:
+                        # Handle None selection
+                        default_index = len(book_options) - 1
 
                     choice = st.selectbox(
                         f"Choice #{i+1}",
@@ -702,11 +717,15 @@ def main():
                 col1, col2 = st.columns([1, 1])
                 with col1:
                     if st.button("Submit Vote", type="primary", use_container_width=True):
-                        # Check for duplicates in rankings
-                        if len(rankings) != len(set(rankings)):
+                        # Filter out None values before checking for duplicates
+                        valid_rankings = [r for r in rankings if r is not None]
+
+                        # Check for duplicates in valid rankings
+                        if len(valid_rankings) != len(set(valid_rankings)):
                             st.error("Please rank each book only once!")
                         else:
-                            st.session_state.votes[voter_name] = rankings
+                            # Store rankings with None values filtered out
+                            st.session_state.votes[voter_name] = valid_rankings
                             # Sync to persistent storage
                             storage = get_persistent_storage()
                             storage['votes'] = st.session_state.votes
