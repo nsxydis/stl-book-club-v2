@@ -4,7 +4,7 @@ Purpose: Simplified application for nominating and voting on books.
 # Standard modules
 import streamlit as st
 from dataclasses import dataclass
-from typing import List, Dict, Optional
+from typing import List, Dict
 import polars as pl
 import requests
 from urllib.parse import quote
@@ -23,35 +23,38 @@ class Book:
         if self.id is None:
             self.id = f"{self.title}_{self.author}".replace(" ", "_").lower()
 
-def search_book_metadata(title: str, author: str = "") -> Optional[Dict]:
-    """Search for book metadata using Google Books API"""
+def search_book_metadata(title: str, author: str = "") -> List[Dict]:
+    """Search for book metadata using Google Books API, returns up to 10 results"""
     try:
         # Construct search query
         query = title
         if author:
             query += f" inauthor:{author}"
 
-        url = f"https://www.googleapis.com/books/v1/volumes?q={quote(query)}&maxResults=1"
+        url = f"https://www.googleapis.com/books/v1/volumes?q={quote(query)}&maxResults=10"
         response = requests.get(url, timeout=5)
 
         if response.status_code == 200:
             data = response.json()
             if data.get('totalItems', 0) > 0:
-                book_info = data['items'][0]['volumeInfo']
+                results = []
+                for item in data.get('items', []):
+                    book_info = item.get('volumeInfo', {})
 
-                # Extract metadata
-                metadata = {
-                    'title': book_info.get('title', title),
-                    'author': ', '.join(book_info.get('authors', [author])) if book_info.get('authors') else author,
-                    'description': book_info.get('description', ''),
-                    'genre': ', '.join(book_info.get('categories', [])) if book_info.get('categories') else '',
-                    'page_count': book_info.get('pageCount', 0)
-                }
-                return metadata
+                    # Extract metadata
+                    metadata = {
+                        'title': book_info.get('title', title),
+                        'author': ', '.join(book_info.get('authors', [])) if book_info.get('authors') else '',
+                        'description': book_info.get('description', ''),
+                        'genre': ', '.join(book_info.get('categories', [])) if book_info.get('categories') else '',
+                        'page_count': book_info.get('pageCount', 0)
+                    }
+                    results.append(metadata)
+                return results
     except Exception as e:
         st.error(f"Error fetching book data: {str(e)}")
 
-    return None
+    return []
 
 def initialize_session_state():
     """Initialize session state variables"""
@@ -64,7 +67,9 @@ def initialize_session_state():
     if 'show_results' not in st.session_state:
         st.session_state.show_results = False
     if 'search_results' not in st.session_state:
-        st.session_state.search_results = None
+        st.session_state.search_results = []
+    if 'selected_book' not in st.session_state:
+        st.session_state.selected_book = None
 
 def add_book(book: Book):
     """Add a book to the nomination list"""
@@ -261,27 +266,48 @@ def main():
 
         if st.button("🔎 Search Online", use_container_width=True):
             if search_title:
-                with st.spinner("Searching for book..."):
-                    metadata = search_book_metadata(search_title, search_author)
-                    if metadata:
-                        st.session_state.search_results = metadata
-                        st.success("✅ Book found! Metadata loaded below.")
+                with st.spinner("Searching for books..."):
+                    results = search_book_metadata(search_title, search_author)
+                    if results:
+                        st.session_state.search_results = results
+                        st.session_state.selected_book = None
+                        st.success(f"✅ Found {len(results)} result(s)! Select a book below.")
                         st.rerun()
                     else:
                         st.warning("No results found. Please enter metadata manually.")
-                        st.session_state.search_results = None
+                        st.session_state.search_results = []
+                        st.session_state.selected_book = None
             else:
                 st.error("Please enter a book title to search")
+
+        # Display search results if available
+        if st.session_state.search_results:
+            st.divider()
+            st.subheader("📚 Search Results")
+            st.caption("Click on a book to select it")
+
+            for idx, result in enumerate(st.session_state.search_results):
+                with st.container():
+                    col1, col2 = st.columns([4, 1])
+                    with col1:
+                        st.markdown(f"**{result['title']}**")
+                        if result['author']:
+                            st.caption(f"by {result['author']}")
+                    with col2:
+                        if st.button("Select", key=f"select_{idx}"):
+                            st.session_state.selected_book = result
+                            st.rerun()
+                    st.divider()
 
         st.divider()
         st.subheader("📝 Book Details")
 
-        # Pre-fill with search results if available
-        default_title = st.session_state.search_results.get('title', '') if st.session_state.search_results else ''
-        default_author = st.session_state.search_results.get('author', '') if st.session_state.search_results else ''
-        default_genre = st.session_state.search_results.get('genre', '') if st.session_state.search_results else ''
-        default_description = st.session_state.search_results.get('description', '') if st.session_state.search_results else ''
-        default_pages = st.session_state.search_results.get('page_count', 300) if st.session_state.search_results else 300
+        # Pre-fill with selected book if available
+        default_title = st.session_state.selected_book.get('title', '') if st.session_state.selected_book else ''
+        default_author = st.session_state.selected_book.get('author', '') if st.session_state.selected_book else ''
+        default_genre = st.session_state.selected_book.get('genre', '') if st.session_state.selected_book else ''
+        default_description = st.session_state.selected_book.get('description', '') if st.session_state.selected_book else ''
+        default_pages = st.session_state.selected_book.get('page_count', 300) if st.session_state.selected_book else 300
 
         with st.form("book_nomination_form", clear_on_submit=True):
             col1, col2 = st.columns(2)
@@ -309,7 +335,8 @@ def main():
                     if add_book(book):
                         st.success(f"✅ Added '{title}' by {author}!")
                         # Clear search results after adding
-                        st.session_state.search_results = None
+                        st.session_state.search_results = []
+                        st.session_state.selected_book = None
                         st.rerun()
                     else:
                         st.error("This book has already been nominated!")
