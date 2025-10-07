@@ -43,7 +43,7 @@ def search_book_metadata(title: str, author: str = "") -> List[Dict]:
         if author:
             query += f" inauthor:{author}"
 
-        url = f"https://www.googleapis.com/books/v1/volumes?q={quote(query)}&maxResults=10"
+        url = f"https://www.googleapis.com/books/v1/volumes?q={quote(query)}&maxResults=10&country=US"
 
         # Add API key if available (optional, helps avoid rate limits)
         if api_key:
