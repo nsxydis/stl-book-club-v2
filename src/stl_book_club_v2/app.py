@@ -9,6 +9,8 @@ import polars as pl
 import requests
 from urllib.parse import quote
 import plotly.graph_objects as go
+import json
+from datetime import datetime
 
 def get_api_key():
     """Get Google Books API key from local file or Streamlit secrets"""
@@ -545,6 +547,132 @@ def display_voting_results(rounds: List[Dict], books: List[Book], total_votes: i
                     percentage = (winner_votes / total_votes * 100) if total_votes > 0 else 0
                     st.info(f"🎯 Won by majority with {winner_votes}/{total_votes} votes ({percentage:.1f}%) in Round {winner_round['round_number']}")
 
+def export_results_to_google_sheets(rounds: List[Dict], books: List[Book], votes: Dict[str, List[str]]):
+    """Export election results to a Google Sheet"""
+    try:
+        import gspread
+        from oauth2client.service_account import ServiceAccountCredentials
+
+        # Get credentials from Streamlit secrets
+        try:
+            credentials_dict = dict(st.secrets["gcp_service_account"])
+        except (AttributeError, KeyError, FileNotFoundError):
+            st.error("⚠️ Google Sheets credentials not found. Please add `gcp_service_account` to your Streamlit secrets.\n\n"
+                    "For local development, create `.streamlit/secrets.toml` with your service account JSON.\n"
+                    "For Streamlit Cloud, add the credentials in your app secrets.")
+            return None
+
+        # Set up the credentials
+        scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
+        credentials = ServiceAccountCredentials.from_json_keyfile_dict(credentials_dict, scope)
+        client = gspread.authorize(credentials)
+
+        # Create a new spreadsheet
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        spreadsheet_name = f"Book Club Election Results - {timestamp}"
+        spreadsheet = client.create(spreadsheet_name)
+
+        # Share the spreadsheet (make it accessible)
+        spreadsheet.share('', perm_type='anyone', role='reader')
+
+        # Create book lookup
+        book_lookup = {book.id: book for book in books}
+
+        # Sheet 1: Summary
+        summary_sheet = spreadsheet.sheet1
+        summary_sheet.update_title("Summary")
+
+        # Find winner
+        winner_round = None
+        for round_data in rounds:
+            if 'winner' in round_data:
+                winner_round = round_data
+                break
+
+        summary_data = [
+            ["Book Club Election Results"],
+            ["Generated:", timestamp],
+            [""],
+            ["Total Voters:", len(votes)],
+            ["Total Books:", len(books)],
+            [""]
+        ]
+
+        if winner_round:
+            winner_book = book_lookup.get(winner_round['winner'])
+            if winner_book:
+                summary_data.extend([
+                    ["🏆 WINNER"],
+                    ["Title:", winner_book.title],
+                    ["Author:", winner_book.author],
+                    ["Genre:", winner_book.genre],
+                    ["Pages:", winner_book.page_count],
+                    [""]
+                ])
+
+        summary_sheet.update('A1', summary_data)
+
+        # Sheet 2: Round by Round Results
+        rounds_sheet = spreadsheet.add_worksheet(title="Round Results", rows=100, cols=10)
+
+        rounds_data = [["Round", "Book", "Votes", "Percentage", "Status"]]
+
+        for round_data in rounds:
+            round_num = round_data['round_number']
+            total_votes_round = sum(round_data['vote_counts'].values())
+
+            for book_id, count in sorted(round_data['vote_counts'].items(), key=lambda x: x[1], reverse=True):
+                book = book_lookup.get(book_id)
+                book_title = book.title if book else book_id
+                percentage = round((count / total_votes_round * 100)) if total_votes_round > 0 else 0
+
+                status = ""
+                if round_data.get('winner') == book_id:
+                    status = "🏆 WINNER"
+                elif round_data.get('eliminated') == book_id:
+                    status = "❌ Eliminated"
+
+                rounds_data.append([round_num, book_title, count, f"{percentage}%", status])
+
+            # Add blank row between rounds
+            rounds_data.append(["", "", "", "", ""])
+
+        rounds_sheet.update('A1', rounds_data)
+
+        # Sheet 3: Voter Ballots
+        ballots_sheet = spreadsheet.add_worksheet(title="Voter Ballots", rows=100, cols=10)
+
+        ballots_data = [["Voter Name", "Rank 1", "Rank 2", "Rank 3", "Rank 4", "Rank 5", "Rank 6", "Rank 7", "Rank 8"]]
+
+        for voter_name, rankings in sorted(votes.items()):
+            row = [voter_name]
+            for book_id in rankings:
+                book = book_lookup.get(book_id)
+                row.append(book.title if book else book_id)
+            ballots_data.append(row)
+
+        ballots_sheet.update('A1', ballots_data)
+
+        # Sheet 4: Book Details
+        books_sheet = spreadsheet.add_worksheet(title="Book Details", rows=100, cols=10)
+
+        books_data = [["Title", "Author", "Genre", "Pages", "Description"]]
+
+        for book in sorted(books, key=lambda b: b.title):
+            books_data.append([book.title, book.author, book.genre, book.page_count, book.description])
+
+        books_sheet.update('A1', books_data)
+
+        return spreadsheet.url
+
+    except ImportError:
+        st.error("⚠️ Required libraries not installed. Please install `gspread` and `oauth2client`:\n\n"
+                "```\npoetry add gspread oauth2client\n```")
+        return None
+    except Exception as e:
+        st.error(f"❌ Error exporting to Google Sheets: {str(e)}")
+        return None
+
 def main():
     st.set_page_config(page_title="Book Club Voting", page_icon="📚", layout="wide")
     initialize_session_state()
@@ -769,12 +897,33 @@ def main():
 
                 if rounds:
                     display_voting_results(rounds, st.session_state.books, len(st.session_state.votes))
+
+                    # Add export button
+                    st.divider()
+                    col1, col2 = st.columns([1, 1])
+
+                    with col1:
+                        if st.button("📊 Export to Google Sheets", type="primary", use_container_width=True):
+                            with st.spinner("Creating Google Sheet..."):
+                                sheet_url = export_results_to_google_sheets(
+                                    rounds,
+                                    st.session_state.books,
+                                    st.session_state.votes
+                                )
+                                if sheet_url:
+                                    st.success("✅ Results exported successfully!")
+                                    st.markdown(f"**[Open Google Sheet]({sheet_url})**")
+
+                    with col2:
+                        if st.button("Hide Results", use_container_width=True):
+                            st.session_state.show_results = False
+                            st.rerun()
                 else:
                     st.error("Unable to calculate results")
 
-                if st.button("Hide Results"):
-                    st.session_state.show_results = False
-                    st.rerun()
+                    if st.button("Hide Results"):
+                        st.session_state.show_results = False
+                        st.rerun()
 
     # Tab 5: Debug
     with tab5:
