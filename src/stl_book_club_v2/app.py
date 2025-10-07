@@ -6,7 +6,6 @@ import streamlit as st
 from dataclasses import dataclass
 from typing import List, Dict, Optional
 import polars as pl
-from collections import defaultdict
 import requests
 from urllib.parse import quote
 
@@ -91,14 +90,28 @@ def calculate_ranked_choice_winner(votes: Dict[str, List[str]], books: List[Book
     if not votes or not books:
         return []
 
-    # Create a set of all book IDs
-    active_book_ids = {book.id for book in books}
+    # Create a set of book IDs that have at least one vote
+    all_voted_book_ids = set()
+    for ranked_choices in votes.values():
+        all_voted_book_ids.update(ranked_choices)
+
+    # Only include books that have votes
+    active_book_ids = {book.id for book in books if book.id in all_voted_book_ids}
+
+    if not active_book_ids:
+        return []
+
     rounds = []
 
     while len(active_book_ids) > 1:
         # Count first-choice votes for active books
-        vote_counts = defaultdict(int)
+        vote_counts = {}
 
+        # Initialize all active books with 0 votes
+        for book_id in active_book_ids:
+            vote_counts[book_id] = 0
+
+        # Count votes
         for ranked_choices in votes.values():
             # Find the first choice that's still active
             for book_id in ranked_choices:
@@ -115,24 +128,46 @@ def calculate_ranked_choice_winner(votes: Dict[str, List[str]], books: List[Book
         }
 
         # Find book with fewest votes
-        if vote_counts:
-            min_votes = min(vote_counts.values())
-            # Get all books with minimum votes
-            books_with_min_votes = [book_id for book_id, count in vote_counts.items() if count == min_votes]
-            # Eliminate the first one (in case of tie)
+        min_votes = min(vote_counts.values())
+        # Get all books with minimum votes
+        books_with_min_votes = [book_id for book_id, count in vote_counts.items() if count == min_votes]
+
+        # Check if we're down to 2 books and they're tied
+        if len(active_book_ids) == 2 and len(books_with_min_votes) == 2:
+            # Both books have same votes - eliminate one and declare winner
+            eliminated_book_id = books_with_min_votes[0]
+            winner_id = books_with_min_votes[1]
+            active_book_ids.remove(eliminated_book_id)
+            round_data['eliminated'] = eliminated_book_id
+            rounds.append(round_data)
+
+            # Add final round with winner
+            rounds.append({
+                'round_number': len(rounds) + 1,
+                'vote_counts': {winner_id: vote_counts[winner_id]},
+                'active_books': 1,
+                'eliminated': None,
+                'winner': winner_id
+            })
+            # Clear active_book_ids to prevent duplicate winner round
+            active_book_ids.clear()
+            break
+        else:
+            # Normal elimination
             eliminated_book_id = books_with_min_votes[0]
             active_book_ids.remove(eliminated_book_id)
             round_data['eliminated'] = eliminated_book_id
 
         rounds.append(round_data)
 
-    # Final round - the winner
-    if active_book_ids:
+    # Final round - the winner (only if we didn't already declare winner above)
+    if active_book_ids and len(active_book_ids) == 1:
         winner_id = list(active_book_ids)[0]
-        vote_counts = defaultdict(int)
+        vote_counts = {}
+        vote_counts[winner_id] = 0
         for ranked_choices in votes.values():
             for book_id in ranked_choices:
-                if book_id in active_book_ids:
+                if book_id == winner_id:
                     vote_counts[book_id] += 1
                     break
 
