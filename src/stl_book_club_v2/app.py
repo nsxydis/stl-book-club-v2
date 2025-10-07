@@ -53,8 +53,16 @@ def search_book_metadata(title: str, author: str = "") -> List[Dict]:
                     }
                     results.append(metadata)
                 return results
+            else:
+                st.warning("No books found matching your search. Please try different keywords or enter metadata manually.")
+        else:
+            st.error(f"Google Books API returned status code {response.status_code}. Please try again or enter metadata manually.")
+    except requests.exceptions.Timeout:
+        st.error("Search request timed out. Please check your internet connection and try again.")
+    except requests.exceptions.RequestException as e:
+        st.error(f"Network error while searching: {str(e)}. Please check your internet connection.")
     except Exception as e:
-        st.error(f"Error fetching book data: {str(e)}")
+        st.error(f"Unexpected error fetching book data: {type(e).__name__}: {str(e)}")
 
     return []
 
