@@ -10,6 +10,18 @@ import requests
 from urllib.parse import quote
 import plotly.graph_objects as go
 
+def get_api_key():
+    """Get Google Books API key from local file or Streamlit secrets"""
+    try:
+        from key import GOOGLE_BOOKS_API_KEY
+        return GOOGLE_BOOKS_API_KEY
+    except ImportError:
+        # Try Streamlit secrets (works in deployed environment)
+        try:
+            return st.secrets.get('GOOGLE_BOOKS_API_KEY', None)
+        except (AttributeError, FileNotFoundError):
+            return None
+
 @dataclass
 class Book:
     """Represents a book nomination"""
@@ -33,7 +45,18 @@ def search_book_metadata(title: str, author: str = "") -> List[Dict]:
             query += f" inauthor:{author}"
 
         url = f"https://www.googleapis.com/books/v1/volumes?q={quote(query)}&maxResults=10"
-        response = requests.get(url, timeout=5)
+
+        # Add API key if available (optional, helps avoid rate limits)
+        api_key = get_api_key()
+        if api_key:
+            url += f"&key={api_key}"
+
+        # Set headers to avoid being blocked
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
+
+        response = requests.get(url, headers=headers, timeout=10)
 
         if response.status_code == 200:
             data = response.json()
@@ -56,7 +79,10 @@ def search_book_metadata(title: str, author: str = "") -> List[Dict]:
             else:
                 st.warning("No books found matching your search. Please try different keywords or enter metadata manually.")
         else:
-            st.error(f"Google Books API returned status code {response.status_code}. Please try again or enter metadata manually.")
+            if response.status_code == 403:
+                st.error("⚠️ Google Books API access denied (403). This may be due to rate limiting. Please add a Google Books API key to your Streamlit secrets, or enter book metadata manually.")
+            else:
+                st.error(f"Google Books API returned status code {response.status_code}. Please try again or enter metadata manually.")
     except requests.exceptions.Timeout:
         st.error("Search request timed out. Please check your internet connection and try again.")
     except requests.exceptions.RequestException as e:
