@@ -39,11 +39,12 @@ def search_book_metadata(title: str, author: str = "") -> List[Dict]:
             data = response.json()
             if data.get('totalItems', 0) > 0:
                 results = []
-                for item in data.get('items', []):
+                for idx, item in enumerate(data.get('items', [])):
                     book_info = item.get('volumeInfo', {})
 
-                    # Extract metadata
+                    # Extract metadata with unique ID
                     metadata = {
+                        'id': item.get('id', f'book_{idx}'),  # Use Google Books ID or fallback
                         'title': book_info.get('title', title),
                         'author': ', '.join(book_info.get('authors', [])) if book_info.get('authors') else '',
                         'description': book_info.get('description', ''),
@@ -510,10 +511,9 @@ def main():
             st.caption("Click on a book to select it")
 
             for idx, result in enumerate(st.session_state.search_results):
-                # Check if this is the selected book
+                # Check if this is the selected book using unique ID
                 is_selected = (st.session_state.selected_book and
-                             result['title'] == st.session_state.selected_book.get('title') and
-                             result['author'] == st.session_state.selected_book.get('author'))
+                             result.get('id') == st.session_state.selected_book.get('id'))
 
                 with st.container():
                     col1, col2 = st.columns([4, 1])
