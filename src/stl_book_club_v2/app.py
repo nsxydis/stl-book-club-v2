@@ -39,6 +39,9 @@ class Book:
 def search_book_metadata(title: str, author: str = "") -> List[Dict]:
     """Search for book metadata using Google Books API, returns up to 10 results"""
     try:
+        # Get API key
+        api_key = get_api_key()
+
         # Construct search query
         query = title
         if author:
@@ -47,7 +50,6 @@ def search_book_metadata(title: str, author: str = "") -> List[Dict]:
         url = f"https://www.googleapis.com/books/v1/volumes?q={quote(query)}&maxResults=10"
 
         # Add API key if available (optional, helps avoid rate limits)
-        api_key = get_api_key()
         if api_key:
             url += f"&key={api_key}"
 
@@ -80,7 +82,16 @@ def search_book_metadata(title: str, author: str = "") -> List[Dict]:
                 st.warning("No books found matching your search. Please try different keywords or enter metadata manually.")
         else:
             if response.status_code == 403:
-                st.error("⚠️ Google Books API access denied (403). This may be due to rate limiting. Please add a Google Books API key to your Streamlit secrets, or enter book metadata manually.")
+                if api_key:
+                    st.error("⚠️ Google Books API access denied (403). Your API key may be invalid or has exceeded quota. Please check your API key configuration.")
+                else:
+                    st.error("⚠️ Google Books API access denied (403). No API key detected. To fix this:\n\n"
+                           "**Local development:** Create a file `src/stl_book_club_v2/key.py` with:\n"
+                           "```python\n"
+                           "GOOGLE_BOOKS_API_KEY = 'your-api-key-here'\n"
+                           "```\n\n"
+                           "**Streamlit Cloud:** Add `GOOGLE_BOOKS_API_KEY` to your app secrets.\n\n"
+                           "Get a free API key at: https://console.cloud.google.com/apis/credentials")
             else:
                 st.error(f"Google Books API returned status code {response.status_code}. Please try again or enter metadata manually.")
     except requests.exceptions.Timeout:
