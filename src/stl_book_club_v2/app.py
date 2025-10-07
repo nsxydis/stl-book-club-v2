@@ -125,6 +125,29 @@ def calculate_ranked_choice_winner(votes: Dict[str, List[str]], books: List[Book
                     vote_counts[book_id] += 1
                     break
 
+        # Check if any book has more than 50% of votes (majority winner)
+        total_votes = len(votes)
+        majority_threshold = total_votes / 2
+        majority_winner = None
+
+        for book_id, count in vote_counts.items():
+            if count > majority_threshold:
+                majority_winner = book_id
+                break
+
+        # If there's a majority winner, declare them and end
+        if majority_winner:
+            round_data = {
+                'round_number': len(rounds) + 1,
+                'vote_counts': dict(vote_counts),
+                'active_books': len(active_book_ids),
+                'eliminated': None,
+                'winner': majority_winner,
+                'majority_win': True
+            }
+            rounds.append(round_data)
+            break
+
         # Record this round
         round_data = {
             'round_number': len(rounds) + 1,
@@ -133,18 +156,18 @@ def calculate_ranked_choice_winner(votes: Dict[str, List[str]], books: List[Book
             'eliminated': None
         }
 
-        # Find book with fewest votes
+        # Find books with fewest votes
         min_votes = min(vote_counts.values())
-        # Get all books with minimum votes
+        # Get all books with minimum votes (could be multiple tied books)
         books_with_min_votes = [book_id for book_id, count in vote_counts.items() if count == min_votes]
 
-        # Check if we're down to 2 books and they're tied
-        if len(active_book_ids) == 2 and len(books_with_min_votes) == 2:
-            # Both books have same votes - eliminate one and declare winner
-            eliminated_book_id = books_with_min_votes[0]
-            winner_id = books_with_min_votes[1]
-            active_book_ids.remove(eliminated_book_id)
-            round_data['eliminated'] = eliminated_book_id
+        # Check if all remaining books are tied
+        if len(books_with_min_votes) == len(active_book_ids):
+            # All books tied - eliminate all but one and declare winner
+            winner_id = books_with_min_votes[0]
+            for book_id in books_with_min_votes[1:]:
+                active_book_ids.remove(book_id)
+            round_data['eliminated'] = books_with_min_votes[1:]  # List of eliminated books
             rounds.append(round_data)
 
             # Add final round with winner
@@ -159,10 +182,15 @@ def calculate_ranked_choice_winner(votes: Dict[str, List[str]], books: List[Book
             active_book_ids.clear()
             break
         else:
-            # Normal elimination
-            eliminated_book_id = books_with_min_votes[0]
-            active_book_ids.remove(eliminated_book_id)
-            round_data['eliminated'] = eliminated_book_id
+            # Normal elimination - eliminate all books tied for last place
+            for eliminated_book_id in books_with_min_votes:
+                active_book_ids.remove(eliminated_book_id)
+
+            # Store eliminated books (single or multiple)
+            if len(books_with_min_votes) == 1:
+                round_data['eliminated'] = books_with_min_votes[0]
+            else:
+                round_data['eliminated'] = books_with_min_votes
 
         rounds.append(round_data)
 
@@ -227,11 +255,26 @@ def display_voting_results(rounds: List[Dict], books: List[Book]):
     for round_data in rounds:
         all_books.update(round_data['vote_counts'].keys())
 
-    # Track which books were eliminated and in which round
+    # Track which books were eliminated and in which round, and find winner
     eliminated_books = {}
+    winner_info = None
     for round_data in rounds:
         if round_data.get('eliminated'):
-            eliminated_books[round_data['eliminated']] = round_data['round_number']
+            eliminated = round_data['eliminated']
+            # Handle both single book and multiple books elimination
+            if isinstance(eliminated, list):
+                for book_id in eliminated:
+                    eliminated_books[book_id] = round_data['round_number']
+            else:
+                eliminated_books[eliminated] = round_data['round_number']
+
+        # Track winner
+        if round_data.get('winner'):
+            winner_info = {
+                'book_id': round_data['winner'],
+                'round': round_data['round_number'],
+                'votes': round_data['vote_counts'].get(round_data['winner'], 0)
+            }
 
     # Build data for line chart using Plotly
     fig = go.Figure()
@@ -271,6 +314,18 @@ def display_voting_results(rounds: List[Dict], books: List[Book]):
                 showlegend=False,
                 hoverinfo='skip'
             ))
+
+    # Add trophy emoji marker for the winner
+    if winner_info:
+        fig.add_trace(go.Scatter(
+            x=[winner_info['round']],
+            y=[winner_info['votes']],
+            mode='text',
+            text=['🏆'],
+            textfont=dict(size=24),
+            showlegend=False,
+            hoverinfo='skip'
+        ))
 
     # Update layout for integer axes
     fig.update_layout(
@@ -319,12 +374,47 @@ def display_voting_results(rounds: List[Dict], books: List[Book]):
                 # Display table only
                 st.dataframe(df, use_container_width=True, hide_index=True)
 
-            # Show eliminated book
+            # Show eliminated book(s)
             if round_data['eliminated']:
-                eliminated_title = book_lookup.get(round_data['eliminated'], 'Unknown')
-                st.warning(f"❌ Eliminated: **{eliminated_title}**")
+                eliminated = round_data['eliminated']
+                # Handle both single book and multiple books elimination
+                if isinstance(eliminated, list):
+                    eliminated_titles = [book_lookup.get(book_id, book_id) for book_id in eliminated]
+                    st.warning(f"❌ Eliminated: **{', '.join(eliminated_titles)}**")
+                else:
+                    eliminated_title = book_lookup.get(eliminated, 'Unknown')
+                    st.warning(f"❌ Eliminated: **{eliminated_title}**")
 
             st.divider()
+
+    # Display winning book details at bottom
+    if winner_round:
+        st.divider()
+        winner_title = book_lookup.get(winner_round['winner'], 'Unknown')
+        winner_book = next((book for book in books if book.id == winner_round['winner']), None)
+
+        st.success(f"## 🎉 Winner: {winner_title}")
+
+        if winner_book:
+            with st.container():
+                col1, col2 = st.columns([1, 2])
+
+                with col1:
+                    st.markdown(f"### 📚 {winner_book.title}")
+                    st.markdown(f"**Author:** {winner_book.author}")
+                    st.markdown(f"**Genre:** {winner_book.genre}")
+                    st.markdown(f"**Pages:** {winner_book.page_count}")
+
+                with col2:
+                    st.markdown("**Description:**")
+                    st.markdown(f"*{winner_book.description}*")
+
+                # Show if it was a majority win
+                if winner_round.get('majority_win'):
+                    total_votes = sum(winner_round['vote_counts'].values())
+                    winner_votes = winner_round['vote_counts'].get(winner_round['winner'], 0)
+                    percentage = (winner_votes / total_votes * 100) if total_votes > 0 else 0
+                    st.info(f"🎯 Won by majority with {winner_votes}/{total_votes} votes ({percentage:.1f}%) in Round {winner_round['round_number']}")
 
 def main():
     st.set_page_config(page_title="Book Club Voting", page_icon="📚", layout="wide")
