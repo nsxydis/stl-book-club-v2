@@ -347,6 +347,13 @@ def display_voting_results(rounds: List[Dict], books: List[Book]):
                 x_values.append(round_data['round_number'])
                 y_values.append(round_data['vote_counts'][book_id])
 
+        # If book was eliminated, add a point going down to zero
+        if book_id in eliminated_books:
+            elim_round = eliminated_books[book_id]
+            # Add one more point after elimination at zero
+            x_values.append(elim_round + 0.5)
+            y_values.append(0)
+
         # Add line trace
         fig.add_trace(go.Scatter(
             x=x_values,
