@@ -619,10 +619,10 @@ def update_voting_tracker(books: List[Book], winner_id: str):
                 new_times = int(current_times) + 1
 
                 # Update: Times Voted On, Last Voted Date, Was Winner (if this book won)
-                worksheet.update(f'E{row_num}', new_times)
-                worksheet.update(f'F{row_num}', today)
+                worksheet.update(values=[[new_times]], range_name=f'E{row_num}')
+                worksheet.update(values=[[today]], range_name=f'F{row_num}')
                 if is_winner:
-                    worksheet.update(f'G{row_num}', 'Yes')
+                    worksheet.update(values=[['Yes']], range_name=f'G{row_num}')
             else:
                 # New book - add it
                 new_row = [
