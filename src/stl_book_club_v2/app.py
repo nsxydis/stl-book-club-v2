@@ -615,11 +615,15 @@ def update_voting_tracker(books: List[Book], winner_id: str):
             if book_key in existing_books:
                 # Book exists - update it
                 row_num = existing_books[book_key]
-                current_times = worksheet.cell(row_num, 5).value or '0'
-                new_times = int(current_times) + 1
+                last_voted_date = worksheet.cell(row_num, 6).value or ''
 
-                # Update: Times Voted On, Last Voted Date, Was Winner (if this book won)
-                worksheet.update(values=[[new_times]], range_name=f'E{row_num}')
+                # Only increment count if last voted date is not today
+                if last_voted_date != today:
+                    current_times = worksheet.cell(row_num, 5).value or '0'
+                    new_times = int(current_times) + 1
+                    worksheet.update(values=[[new_times]], range_name=f'E{row_num}')
+
+                # Update: Last Voted Date, Was Winner (if this book won)
                 worksheet.update(values=[[today]], range_name=f'F{row_num}')
                 if is_winner:
                     worksheet.update(values=[['Yes']], range_name=f'G{row_num}')
