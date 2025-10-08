@@ -1,0 +1,25 @@
+[project]
+name = "stl-book-club-v2"
+version = "0.2.0"
+description = ""
+authors = [
+    {name = "Nick Xydis",email = "nsxydis@gmail.com"}
+]
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "streamlit (>=1.46.1,<2.0.0)",
+    "polars (>=1.34.0,<2.0.0)",
+    "plotly (>=6.3.1,<7.0.0)",
+    "requests (>=2.31.0,<3.0.0)",
+    "gspread (>=6.0.0,<7.0.0)",
+    "oauth2client (>=4.1.3,<5.0.0)"
+]
+
+[tool.poetry]
+packages = [{include = "stl_book_club_v2", from = "src"}]
+
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
