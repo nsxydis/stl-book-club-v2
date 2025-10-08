@@ -10,6 +10,7 @@ import requests
 from urllib.parse import quote
 import plotly.graph_objects as go
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 def get_api_key():
     """Get Google Books API key from local file or Streamlit secrets"""
@@ -574,8 +575,8 @@ def update_voting_tracker(books: List[Book], winner_id: str):
         spreadsheet = client.open_by_key(sheet_id)
         worksheet = spreadsheet.sheet1
 
-        # Get current date
-        today = datetime.now().strftime("%Y-%m-%d")
+        # Get current date in US Central timezone
+        today = datetime.now(ZoneInfo("America/Chicago")).strftime("%Y-%m-%d")
 
         # Get all existing records
         all_values = worksheet.get_all_values()
