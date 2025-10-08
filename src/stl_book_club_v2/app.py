@@ -9,7 +9,6 @@ import polars as pl
 import requests
 from urllib.parse import quote
 import plotly.graph_objects as go
-import json
 from datetime import datetime
 
 def get_api_key():
@@ -547,8 +546,8 @@ def display_voting_results(rounds: List[Dict], books: List[Book], total_votes: i
                     percentage = (winner_votes / total_votes * 100) if total_votes > 0 else 0
                     st.info(f"🎯 Won by majority with {winner_votes}/{total_votes} votes ({percentage:.1f}%) in Round {winner_round['round_number']}")
 
-def export_results_to_google_sheets(rounds: List[Dict], books: List[Book], votes: Dict[str, List[str]]):
-    """Export election results to a Google Sheet"""
+def update_voting_tracker(books: List[Book], winner_id: str):
+    """Update the Google Sheet tracking book voting history"""
     try:
         import gspread
         from oauth2client.service_account import ServiceAccountCredentials
@@ -556,122 +555,94 @@ def export_results_to_google_sheets(rounds: List[Dict], books: List[Book], votes
         # Get credentials from Streamlit secrets
         try:
             credentials_dict = dict(st.secrets["gcp_service_account"])
+            sheet_id = st.secrets.get("voting_tracker_sheet_id", None)
         except (AttributeError, KeyError, FileNotFoundError):
-            st.error("⚠️ Google Sheets credentials not found. Please add `gcp_service_account` to your Streamlit secrets.\n\n"
-                    "For local development, create `.streamlit/secrets.toml` with your service account JSON.\n"
-                    "For Streamlit Cloud, add the credentials in your app secrets.")
-            return None
+            st.error("⚠️ Google Sheets credentials or sheet ID not found in secrets.")
+            return False
+
+        if not sheet_id or sheet_id == "your-sheet-id-here":
+            st.error("⚠️ Please configure `voting_tracker_sheet_id` in `.streamlit/secrets.toml`")
+            st.info("Create a Google Sheet, share it with `robot-38@glassy-mystery-427419-e0.iam.gserviceaccount.com` (Editor access), and add its ID to secrets.")
+            return False
 
         # Set up the credentials
         scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
         credentials = ServiceAccountCredentials.from_json_keyfile_dict(credentials_dict, scope)
         client = gspread.authorize(credentials)
 
-        # Create a new spreadsheet
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        spreadsheet_name = f"Book Club Election Results - {timestamp}"
-        spreadsheet = client.create(spreadsheet_name)
+        # Open the tracking spreadsheet
+        spreadsheet = client.open_by_key(sheet_id)
+        worksheet = spreadsheet.sheet1
 
-        # Share the spreadsheet (make it accessible)
-        spreadsheet.share('', perm_type='anyone', role='reader')
+        # Get current date
+        today = datetime.now().strftime("%Y-%m-%d")
 
-        # Create book lookup
-        book_lookup = {book.id: book for book in books}
+        # Get all existing records
+        all_values = worksheet.get_all_values()
 
-        # Sheet 1: Summary
-        summary_sheet = spreadsheet.sheet1
-        summary_sheet.update_title("Summary")
+        # Check if sheet has headers, if not add them
+        if not all_values or len(all_values) == 0 or not all_values[0] or len(all_values[0]) == 0 or all_values[0][0] != 'Title':
+            # Add headers
+            worksheet.update('A1', [['Title', 'Author', 'Genre', 'Pages', 'Times Voted On', 'Last Voted Date', 'Was Winner']])
+            all_values = worksheet.get_all_values()
 
-        # Find winner
-        winner_round = None
-        for round_data in rounds:
-            if 'winner' in round_data:
-                winner_round = round_data
-                break
+        # Parse records (skip header row)
+        headers = all_values[0]
+        records = []
+        row_numbers = []  # Track actual row numbers in the sheet
 
-        summary_data = [
-            ["Book Club Election Results"],
-            ["Generated:", timestamp],
-            [""],
-            ["Total Voters:", len(votes)],
-            ["Total Books:", len(books)],
-            [""]
-        ]
+        for idx, row in enumerate(all_values[1:]):
+            actual_row_num = idx + 2  # +2 because row 1 is header and enumerate starts at 0
 
-        if winner_round:
-            winner_book = book_lookup.get(winner_round['winner'])
-            if winner_book:
-                summary_data.extend([
-                    ["🏆 WINNER"],
-                    ["Title:", winner_book.title],
-                    ["Author:", winner_book.author],
-                    ["Genre:", winner_book.genre],
-                    ["Pages:", winner_book.page_count],
-                    [""]
-                ])
+            # Skip empty rows
+            if not row or all(cell == '' for cell in row):
+                continue
+            # Create record with available data, padding with empty strings if needed
+            record = {}
+            for i in range(len(headers)):
+                record[headers[i]] = row[i] if i < len(row) else ''
+            records.append(record)
+            row_numbers.append(actual_row_num)  # Store the actual row number
 
-        summary_sheet.update('A1', summary_data)
+        # Create a lookup of existing books by title+author with actual row numbers
+        existing_books = {f"{r.get('Title', '')}|{r.get('Author', '')}": row_numbers[i] for i, r in enumerate(records)}
 
-        # Sheet 2: Round by Round Results
-        rounds_sheet = spreadsheet.add_worksheet(title="Round Results", rows=100, cols=10)
+        # Update each book
+        for book in books:
+            book_key = f"{book.title}|{book.author}"
+            is_winner = (book.id == winner_id)
 
-        rounds_data = [["Round", "Book", "Votes", "Percentage", "Status"]]
+            if book_key in existing_books:
+                # Book exists - update it
+                row_num = existing_books[book_key]
+                current_times = worksheet.cell(row_num, 5).value or '0'
+                new_times = int(current_times) + 1
 
-        for round_data in rounds:
-            round_num = round_data['round_number']
-            total_votes_round = sum(round_data['vote_counts'].values())
+                # Update: Times Voted On, Last Voted Date, Was Winner (if this book won)
+                worksheet.update(f'E{row_num}', new_times)
+                worksheet.update(f'F{row_num}', today)
+                if is_winner:
+                    worksheet.update(f'G{row_num}', 'Yes')
+            else:
+                # New book - add it
+                new_row = [
+                    book.title,
+                    book.author,
+                    book.genre,
+                    book.page_count,
+                    1,  # Times Voted On
+                    today,  # Last Voted Date
+                    'Yes' if is_winner else 'No'  # Was Winner
+                ]
+                worksheet.append_row(new_row)
 
-            for book_id, count in sorted(round_data['vote_counts'].items(), key=lambda x: x[1], reverse=True):
-                book = book_lookup.get(book_id)
-                book_title = book.title if book else book_id
-                percentage = round((count / total_votes_round * 100)) if total_votes_round > 0 else 0
+        return True
 
-                status = ""
-                if round_data.get('winner') == book_id:
-                    status = "🏆 WINNER"
-                elif round_data.get('eliminated') == book_id:
-                    status = "❌ Eliminated"
-
-                rounds_data.append([round_num, book_title, count, f"{percentage}%", status])
-
-            # Add blank row between rounds
-            rounds_data.append(["", "", "", "", ""])
-
-        rounds_sheet.update('A1', rounds_data)
-
-        # Sheet 3: Voter Ballots
-        ballots_sheet = spreadsheet.add_worksheet(title="Voter Ballots", rows=100, cols=10)
-
-        ballots_data = [["Voter Name", "Rank 1", "Rank 2", "Rank 3", "Rank 4", "Rank 5", "Rank 6", "Rank 7", "Rank 8"]]
-
-        for voter_name, rankings in sorted(votes.items()):
-            row = [voter_name]
-            for book_id in rankings:
-                book = book_lookup.get(book_id)
-                row.append(book.title if book else book_id)
-            ballots_data.append(row)
-
-        ballots_sheet.update('A1', ballots_data)
-
-        # Sheet 4: Book Details
-        books_sheet = spreadsheet.add_worksheet(title="Book Details", rows=100, cols=10)
-
-        books_data = [["Title", "Author", "Genre", "Pages", "Description"]]
-
-        for book in sorted(books, key=lambda b: b.title):
-            books_data.append([book.title, book.author, book.genre, book.page_count, book.description])
-
-        books_sheet.update('A1', books_data)
-
-        return spreadsheet.url
-
-    except ImportError:
-        st.error("⚠️ Required libraries not installed. Please install `gspread` and `oauth2client`:\n\n"
-                "```\npoetry add gspread oauth2client\n```")
-        return None
     except Exception as e:
-        st.error(f"❌ Error exporting to Google Sheets: {str(e)}")
-        return None
+        import traceback
+        st.error(f"❌ Error updating tracking sheet: {str(e)}")
+        st.error(f"**Traceback:**\n```\n{traceback.format_exc()}\n```")
+        return False
 
 def main():
     st.set_page_config(page_title="Book Club Voting", page_icon="📚", layout="wide")
@@ -898,21 +869,23 @@ def main():
                 if rounds:
                     display_voting_results(rounds, st.session_state.books, len(st.session_state.votes))
 
-                    # Add export button
+                    # Find winner
+                    winner_id = None
+                    for round_data in rounds:
+                        if 'winner' in round_data:
+                            winner_id = round_data['winner']
+                            break
+
+                    # Add tracking button
                     st.divider()
                     col1, col2 = st.columns([1, 1])
 
                     with col1:
-                        if st.button("📊 Export to Google Sheets", type="primary", use_container_width=True):
-                            with st.spinner("Creating Google Sheet..."):
-                                sheet_url = export_results_to_google_sheets(
-                                    rounds,
-                                    st.session_state.books,
-                                    st.session_state.votes
-                                )
-                                if sheet_url:
-                                    st.success("✅ Results exported successfully!")
-                                    st.markdown(f"**[Open Google Sheet]({sheet_url})**")
+                        if st.button("📊 Record to Tracking Sheet", type="primary", use_container_width=True):
+                            with st.spinner("Updating tracking sheet..."):
+                                if update_voting_tracker(st.session_state.books, winner_id):
+                                    st.success("✅ Tracking sheet updated!")
+                                    st.balloons()
 
                     with col2:
                         if st.button("Hide Results", use_container_width=True):
